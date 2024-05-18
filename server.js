@@ -1,5 +1,5 @@
 const axios = require("axios");
-const cheerio = require("cheerio");
+const { parseDocument, DomUtils } = require("htmlparser2");
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const app = express();
@@ -65,38 +65,39 @@ bot.on("message", async (msg) => {
       const response = await axios.get(url);
       const htmlCode = response.data;
 
-      // Load the HTML code into Cheerio
-      const $ = cheerio.load(htmlCode);
+      // Parse the HTML code with htmlparser2
+      const root = parseDocument(htmlCode);
+      const movieItems = DomUtils.findAll((elem) => elem.name === "li", root);
 
       // Array to store movie names and URLs
       const movies = [];
 
       // Find all the movie list items
-      $("li").each((index, element) => {
-        let name = $(element).find(".directory-entry").text().trim(); // Extract movie name
-        const url = $(element).find(".directory-entry").attr("href"); // Extract movie URL
+      movieItems.forEach((element) => {
+        const nameElem = DomUtils.findOne(
+          (el) => el.attribs && el.attribs.class === "directory-entry",
+          element.children
+        );
 
-        // Remove [YTS.MX] from the movie name
-        //   name = name.replace(/\[.*?\]/g, "").trim();
+        if (nameElem) {
+          const name = DomUtils.textContent(nameElem).trim();
+          const url = nameElem.attribs.href;
 
-        // Push the movie name and URL to the movies array
-        if (name && url) {
-          movies.push({ name, url });
+          // Push the movie name and URL to the movies array
+          if (name && url) {
+            movies.push({ name, url });
+          }
         }
       });
+
       if (movies.length === 0) {
         // If no movies found, send a sorry message
-        if (movieName.toLowerCase().includes("/")) {
-          const sorryMessage = "";
-          bot.sendMessage(chatId, sorryMessage);
-        } else {
-          const sorryMessage = `
-  Sorry, I couldn't find any movies with the name "${movieName}" 😔🎬
-  
-  Feel free to try searching for another movie!
-  `;
-          bot.sendMessage(chatId, sorryMessage);
-        }
+        const sorryMessage = `
+        Sorry, I couldn't find any movies with the name "${movieName}" 😔🎬
+        
+        Feel free to try searching for another movie!
+        `;
+        bot.sendMessage(chatId, sorryMessage);
       } else {
         // Send each movie as a separate message with a button
         movies.forEach((movie, index) => {
@@ -111,8 +112,6 @@ bot.on("message", async (msg) => {
           });
         });
       }
-
-      // bot.sendMessage(chatId, "Movies sent to Telegram.");
     } catch (error) {
       console.error(
         "Error:",
@@ -125,37 +124,45 @@ bot.on("message", async (msg) => {
     }
   }
 });
+
 // Event listener for callback queries
 bot.on("callback_query", async (callbackQuery) => {
   const movieUrl = callbackQuery.data;
   const chatId = callbackQuery.message.chat.id;
-  // const responseMessage = `You clicked on movie: ${movieUrl}`;
-  // bot.sendMessage(chatId, responseMessage);
 
   try {
     const beforeMsg =
-      "------------------------\n\nYou can Download the Movie From here....\nor you can just watch it online by coping the link and network stream with VLC media player or any other play supports network stream\n\n------------------------";
+      "------------------------\n\nYou can Download the Movie From here....\nor you can just watch it online by copying the link and network stream with VLC media player or any other play supports network stream\n\n------------------------";
     bot.sendMessage(chatId, beforeMsg);
+
     // Make a GET request to the movie URL
     const movieLink = `${siteLink}${movieUrl}`;
     const response = await axios.get(movieLink);
     const htmlCode = response.data;
 
-    // Load the HTML code into Cheerio
-    const $ = cheerio.load(htmlCode);
+    // Parse the HTML code with htmlparser2
+    const root = parseDocument(htmlCode);
+    const fileItems = DomUtils.findAll((elem) => elem.name === "li", root);
 
     // Extract file names and hrefs
     const files = [];
-    $("li").each((index, element) => {
-      const fileName = $(element).find(".file-entry").text().trim(); // Extract file name
-      const href = $(element).find(".file-entry").attr("href"); // Extract href
+    fileItems.forEach((element) => {
+      const fileElem = DomUtils.findOne(
+        (el) => el.attribs && el.attribs.class === "file-entry",
+        element.children
+      );
 
-      // Include files with names containing ".mp4" or ".mkv"
-      if (
-        fileName.toLowerCase().includes(".mp4") ||
-        fileName.toLowerCase().includes(".mkv")
-      ) {
-        files.push({ fileName, href });
+      if (fileElem) {
+        const fileName = DomUtils.textContent(fileElem).trim();
+        const href = fileElem.attribs.href;
+
+        // Include files with names containing ".mp4" or ".mkv"
+        if (
+          fileName.toLowerCase().includes(".mp4") ||
+          fileName.toLowerCase().includes(".mkv")
+        ) {
+          files.push({ fileName, href });
+        }
       }
     });
 
