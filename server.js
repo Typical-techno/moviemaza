@@ -206,7 +206,7 @@ const listFiles = ($, chatId, movieUrl, movieTitle) => {
 
     const message = `${index + 1}. ${file.fileName}\n`;
     const keyboard = {
-      inline_keyboard: [
+      inline_keyboard: [ 
         [
           { text: downloadButtonText, url: downloadUrl },
           { text: watchOnlineButtonText, url: watchOnlineUrl }
