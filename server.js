@@ -1,10 +1,11 @@
 const axios = require("axios");
-const cheerio = require("cheerio");
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const app = express();
 require("dotenv").config();
 const path = require("path");
+const jsdom = require("jsdom");
+const { JSDOM } = jsdom;
 
 // Initialize Telegram bot
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -15,13 +16,10 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
- 
+
 app.get("/", (req, res) => {
   res.send("Your API is LIVE 🚀");
 });
-
-// Middleware to serve static files from the 'public' directory
-app.use(express.static(path.join(__dirname, 'Movie')));
 
 // Route to serve movie.html at /movie
 app.get('/movie', (req, res) => {
@@ -59,8 +57,6 @@ bot.onText(/\/start/, (msg) => {
   bot.sendMessage(chatId, responseMessage);
 });
 
-const siteLink = process.env.BASE_URL;
-
 // Event listener for incoming messages
 bot.on("message", async (msg) => {
   if (valueWhichControl) {
@@ -68,30 +64,20 @@ bot.on("message", async (msg) => {
     const movieName = msg.text.trim();
 
     try {
-      const url = `${siteLink}/s/${encodeURIComponent(movieName)}`;
+      const url = `${process.env.BASE_URL}/s/${encodeURIComponent(movieName)}`;
 
       // Make a GET request to the movie URL
       const response = await axios.get(url);
       const htmlCode = response.data;
 
-      // Load the HTML code into Cheerio
-      const $ = cheerio.load(htmlCode);
+      // Parse HTML using jsdom
+      const dom = new JSDOM(htmlCode);
+      const document = dom.window.document;
 
-      // Array to store movie/series names and URLs
-      const movies = [];
+      // Find all movie links
+      const movieLinks = document.querySelectorAll(".directory-entry");
 
-      // Find all the movie/series list items
-      $("li").each((index, element) => {
-        let name = $(element).find(".directory-entry").text().trim(); // Extract movie/series name
-        const url = $(element).find(".directory-entry").attr("href"); // Extract movie/series URL
-
-        // Push the movie/series name and URL to the movies array
-        if (name && url) {
-          movies.push({ name, url });
-        }
-      });
-
-      if (movies.length === 0) {
+      if (movieLinks.length === 0) {
         // If no movies found, send a sorry message
         const sorryMessage = `
   Sorry, I couldn't find any movies or series with the name "${movieName}" 😔🎬
@@ -101,11 +87,13 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, sorryMessage);
       } else {
         // Send each movie/series as a separate message with a button
-        movies.forEach((movie, index) => {
+        movieLinks.forEach((movieLink, index) => {
           const buttonText = `This is My Movie/Series`;
-          const message = `🎬 ${index + 1}. *${movie.name}*`;
+          const name = movieLink.textContent.trim();
+          const url = movieLink.getAttribute("href");
+          const message = `🎬 ${index + 1}. *${name}*`;
           const keyboard = {
-            inline_keyboard: [[{ text: buttonText, callback_data: movie.url }]],
+            inline_keyboard: [[{ text: buttonText, callback_data: url }]],
           };
           bot.sendMessage(chatId, message, {
             parse_mode: "Markdown",
@@ -114,14 +102,8 @@ bot.on("message", async (msg) => {
         });
       }
     } catch (error) {
-      console.error(
-        "Error:",
-        error.response ? error.response.data : error.message
-      );
-      bot.sendMessage(
-        chatId,
-        "Error searching for movies. Please try again later."
-      );
+      console.error("Error:", error.response ? error.response.data : error.message);
+      bot.sendMessage(chatId, "Error searching for movies. Please try again later.");
     }
   }
 });
@@ -135,33 +117,30 @@ bot.on("callback_query", async (callbackQuery) => {
     const beforeMsg =
       "------------------------\n\nYou can Download the Movie/Series From here....\nor you can just watch it online by copying the link and network stream with VLC media player or any other player that supports network stream\n\n------------------------";
     bot.sendMessage(chatId, beforeMsg);
-    // Make a GET request to the movie/series URL
-    const movieLink = `${siteLink}${movieUrl}`;
+    const movieLink = `${process.env.BASE_URL}${movieUrl}`;
     const response = await axios.get(movieLink);
     const htmlCode = response.data;
 
-    // Load the HTML code into Cheerio
-    const $ = cheerio.load(htmlCode);
+    // Parse HTML using jsdom
+    const dom = new JSDOM(htmlCode);
+    const document = dom.window.document;
+
+    // Find all file links
+    const fileLinks = document.querySelectorAll(".file-entry");
 
     // Check if it's a series page by looking for seasons
-    const seasons = [];
-    $("li").each((index, element) => {
-      const seasonName = $(element).find(".directory-entry").text().trim();
-      const seasonHref = $(element).find(".directory-entry").attr("href");
-
-      if (seasonName && seasonHref) {
-        seasons.push({ seasonName, seasonHref });
-      }
-    });
+    const seasons = document.querySelectorAll(".directory-entry");
 
     if (seasons.length > 0) {
       // It's a series, so list the seasons
       seasons.forEach((season, index) => {
         const buttonText = `Select Season`;
-        const message = `${index + 1}. ${season.seasonName}`;
+        const seasonName = season.textContent.trim();
+        const seasonHref = season.getAttribute("href");
+        const message = `${index + 1}. ${seasonName}`;
         const keyboard = {
           inline_keyboard: [
-            [{ text: buttonText, callback_data: season.seasonHref }],
+            [{ text: buttonText, callback_data: seasonHref }],
           ],
         };
         bot.sendMessage(chatId, message, {
@@ -170,54 +149,30 @@ bot.on("callback_query", async (callbackQuery) => {
       });
     } else {
       // It's a movie, so list the files
-      listFiles($, chatId, movieUrl, $("title").text().trim());
+      fileLinks.forEach((fileLink, index) => {
+        const fileName = fileLink.textContent.trim();
+        const href = fileLink.getAttribute("href");
+        const downloadUrl = `${process.env.BASE_URL}${href}`;
+        const watchOnlineUrl = `https://moviemaza.vercel.app/Movie/movie.html?source=${encodeURIComponent(downloadUrl)}&title=${encodeURIComponent(fileName)}`;
+
+        const message = `${fileName}\n`;
+        const keyboard = {
+          inline_keyboard: [ 
+            [
+              { text: 'Download', url: downloadUrl },
+              { text: 'Watch Online', url: watchOnlineUrl }
+            ],
+          ],
+        };
+        bot.sendMessage(chatId, message, {
+          reply_markup: JSON.stringify(keyboard),
+        });
+      });
     }
   } catch (error) {
-    console.error(
-      "Error:",
-      error.response ? error.response.data : error.message
-    );
+    console.error("Error:", error.response ? error.response.data : error.message);
   }
 });
-
-// Function to list files
-const listFiles = ($, chatId, movieUrl, movieTitle) => {
-  // Extract file names and hrefs
-  const files = [];
-  $("li").each((index, element) => {
-    const fileName = $(element).find(".file-entry").text().trim(); // Extract file name
-    const href = $(element).find(".file-entry").attr("href"); // Extract href
-
-    // Include files with names containing ".mp4" or ".mkv"
-    if (
-      fileName.toLowerCase().includes(".mp4") ||
-      fileName.toLowerCase().includes(".mkv")
-    ) {
-      files.push({ fileName, href });
-    }
-  });
-
-  // Send file names and hrefs as buttons
-  files.forEach((file, index) => {
-    const downloadButtonText = `Download`;
-    const watchOnlineButtonText = `Watch Online`;
-    const downloadUrl = `${siteLink}${file.href}`;
-    const watchOnlineUrl = `https://moviemaza.vercel.app/Movie/movie.html?source=${encodeURIComponent(downloadUrl)}&title=${encodeURIComponent(file.fileName)}`;
-
-    const message = `${index + 1}. ${file.fileName}\n`;
-    const keyboard = {
-      inline_keyboard: [ 
-        [
-          { text: downloadButtonText, url: downloadUrl },
-          { text: watchOnlineButtonText, url: watchOnlineUrl }
-        ],
-      ],
-    };
-    bot.sendMessage(chatId, message, {
-      reply_markup: JSON.stringify(keyboard),
-    });
-  });
-};
 
 // Event listener for season callback queries
 bot.on("callback_query", async (callbackQuery) => {
@@ -226,19 +181,38 @@ bot.on("callback_query", async (callbackQuery) => {
 
   try {
     // Make a GET request to the season URL
-    const seasonLink = `${siteLink}${seasonUrl}`;
+    const seasonLink = `${process.env.BASE_URL}${seasonUrl}`;
     const response = await axios.get(seasonLink);
     const htmlCode = response.data;
 
-    // Load the HTML code into Cheerio
-    const $ = cheerio.load(htmlCode);
+    // Parse HTML using jsdom
+    const dom = new JSDOM(htmlCode);
+    const document = dom.window.document;
+
+    // Find all file links
+    const fileLinks = document.querySelectorAll(".file-entry");
 
     // List the files in the season
-    listFiles($, chatId, seasonUrl, $("title").text().trim());
+    fileLinks.forEach((fileLink, index) => {
+      const fileName = fileLink.textContent.trim();
+      const href = fileLink.getAttribute("href");
+      const downloadUrl = `${process.env.BASE_URL}${href}`;
+      const watchOnlineUrl = `https://a751-103-167-205-137.ngrok-free.app/Movie/movie.html?source=${encodeURIComponent(downloadUrl)}&title=${encodeURIComponent(fileName)}`;
+
+      const message = `${fileName}\n`;
+      const keyboard = {
+        inline_keyboard: [ 
+          [
+            { text: 'Download', url: downloadUrl },
+            { text: 'Watch Online', url: watchOnlineUrl }
+          ],
+        ],
+      };
+      bot.sendMessage(chatId, message, {
+        reply_markup: JSON.stringify(keyboard),
+      });
+    });
   } catch (error) {
-    console.error(
-      "Error:",
-      error.response ? error.response.data : error.message
-    );
+    console.error("Error:", error.response ? error.response.data : error.message);
   }
 });
